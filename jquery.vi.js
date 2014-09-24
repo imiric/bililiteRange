@@ -299,6 +299,14 @@ $.exmap([
 		var keys = match[1].trim();
 		var command = bililiteRange.ex.string(match[2]);
 		// TODO: remove any old key handlers
+		// TODO: change to just create the keydown handler, and use a closure to check mode rather than a custom event
+		// something like:
+		// $el.off('keydown', {keys: keys});
+		// $el.keydown({keys: keys}, function(event){
+		// $el.data('ex.status').status({
+		// run: function() { if vimode == 'INPUT' && variant rng.ex(command, '%%')
+		// });
+		// });
 		$.exmap({
 			keys: keys,
 			command: command,
