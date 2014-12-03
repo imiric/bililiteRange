@@ -30,36 +30,16 @@
 
 (function($){
 
-$.viClass = $.viClass || 'vi';
 $.fn.vi = function(status, toolbar, exrc){
+	this.ex(status, toolbar);
 	var self = this;
-	$(toolbar).click (function(evt){
-		$(evt.target).trigger('vi-click', [self]);
-		return false;
-	}).keydown({keys: /\w/}, function (evt){
-		// numbers/letters to activate the toolbar buttons (can tab/shift-tab over then enter, as normal)
+	if (exrc) $.get(exrc).then(function(commands){
 		self.each(function(){
-			bililiteRange(this).ex ('toolbar '+parseInt(evt.hotkeys, 36));
-			evt.preventDefault();
-			return false;
-		});
-	});
-	this.each(function(){
-		var rng = bililiteRange(this);
-		rng.undo(0); // initialize the undo handler (ex does this but we haven't called ex yet)
-		// track saving and writing
-		var state = rng.data();
-		var monitor = state.monitor = $(this).savemonitor();
-		state['save~state'] = monitor.state();
-		monitor.on($.savemonitor.states, function(evt){
-			state['save~state'] = evt.type;
-		});
-		if (exrc) $.get(exrc).then(function(commands){
 			// note that this is done asynchronously, so the user may be editing before this gets executed
-			rng.ex(commands);
+			var rng = bililiteRange(this).ex(commands);
 		});
 	});
-	return this.addClass($.viClass).data('vi.status', $(status)).data('vi.toolbar', $(toolbar));
+	return this;
 }
 
 // extensions to bililiteRange
@@ -72,49 +52,7 @@ bililiteRange.extend({
 	}
 });
 
-
-// create special events that let us check for vi-specific elements and modes
-
-$.event.fixHooks['bililiteRangeData'] = { props:['detail'] }; // make sure it's copied over
-$.event.fixHooks['vi-data'] = { props:['detail'] };
-$.event.special['vi-data'] = {
-	delegateType: 'bililiteRangeData',
-	bindType: 'bililiteRangeData',
-	handle: function(evt){
-		if (!$(evt.target).hasClass($.viClass)) return;
-		var desiredoption = evt.data && evt.data.name;
-		if (desiredoption && evt.detail.name != desiredoption) return;
-		evt.rng = bililiteRange(evt.target);
-		return evt.handleObj.handler.apply(this, arguments);
-	}
-}
-
-$.event.special['vi-keydown'] = {
-	delegateType: 'keydown',
-	bindType: 'keydown',
-	handle: function(evt){
-		if (!$(evt.target).hasClass($.viClass)) return;
-		var mode = bililiteRange(evt.target).data().vimode;
-		var desiredmode = evt.data && evt.data.mode;
-		if (desiredmode && mode != desiredmode) return;
-		evt.rng = bililiteRange(evt.target);
-		return evt.handleObj.handler.apply(this, arguments);
-	}
-};
-
-$.event.special['vi-click'] = {
-	handle: function(evt, target){
-		var self = this, args = arguments;
-		target.each(function(){
-			evt.rng = bililiteRange(this);
-			var mode = evt.rng.data().vimode;
-			var desiredmode = evt.data && evt.data.mode;
-			if (desiredmode && mode != desiredmode) return;
-			return evt.handleObj.handler.apply(self, args);
-		});
-	}
-};
-
+// TODO: simplify this
 function executeCommand (rng, command, defaultAddress){
 	// returns a function that will run command (if not defined, then will run whatever command is passed in when executed)
 	return function (text){
@@ -132,6 +70,7 @@ function executeCommand (rng, command, defaultAddress){
 }
 
 var body = $('body');
+// TODO: eliminate this (most of it is in the button command anyway)
 $.exmap = function(opts, defaults){
 	if ($.isArray(opts)){
 		var self = this;
@@ -269,22 +208,6 @@ body.on('vi-data', {name: 'tabSize'}, function (evt){
 
 $.exmap([
 {
-	name: 'button',
-	command: function (parameter, variant){
-		var exmapparam = { buttonContainer: $.data(this.element(), 'vi.toolbar') };
-		if (variant){
-			// use the complex form
-			bililiteRange.ex.splitCommands(parameter, ' ').forEach(function(item){
-				var match = /(\w+)=(.+)/.exec(item);
-				if (!match) throw new Error('Bad syntax in button: '+item);
-				exmapparam[match[1]] = bililiteRange.ex.string(match[2]);
-			});
-		}else{
-			exmapparam.name = parameter;
-		}
-		$.exmap(exmapparam);
-	}
-},{
 	name: 'console',
 	command: function (parameter, variant){
 		console.log(executeCommand(this)(parameter));
@@ -314,14 +237,6 @@ $.exmap([
 		});
 	}
 },{
-	name: 'read',
-	command: function (parameter, variant){
-		var rng = this;
-		$.get(parameter, function (text) {
-			rng.text(text, 'end').select().element().focus();
-		});
-	}
-},{
 	name: 'repeat',
 	command: function (parameter, variant){
 		var state = this.data();
@@ -334,27 +249,6 @@ $.exmap([
 	name: 'select',
 	command: function (parameter, variant){
 		this.bounds(parameter).select();
-	}
-},{
-	name: 'sendkeys',
-	command: function (parameter, variant){
-		this.sendkeys(parameter).element().focus();
-	}
-},{
-	name: 'toolbar',
-	command: function (parameter, variant){
-		var which = parseInt(parameter);
-		var target = $(this.element());
-		var toolbar = target.data('vi.toolbar');
-		if (isNumeric (which)){
-			var button = $('button', toolbar).eq(which);
-			button.trigger ('vi-click', [target]);
-			// TODO: refactor this with the keydown handler
-			button.addClass('highlight')
-			setTimeout(function(){ button.removeClass('highlight') }, 400);
-		}else{
-			$('button', toolbar).eq(0).focus();
-		}
 	}
 },{
 	name: 'vi',
@@ -372,22 +266,6 @@ $.exmap([
 			state.repeatcount = 0;
 		}
 		state.vimode = parameter;
-	}
-},{
-	name: 'write',
-	command: function(parameter, variant){
-		var rng = this, state = this.data(), el = this.element();
-		if (parameter) state.file = parameter;
-		state.monitor.clean($.data(el, 'vi.status').status({
-			run: function() { return $.post(state.directory, {
-				buffer: rng.all(),
-				file: state.file
-			}).then(
-				function() { return state.file+' Saved' },
-				function() { return new Error(state.file+' Not saved') }
-			)},
-			returnPromise: true
-		}));
 	}
 },{
 	keys: '^z', // not really part of vi, but too ingrained in my fingers

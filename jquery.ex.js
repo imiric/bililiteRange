@@ -35,6 +35,7 @@ $.fn.ex = function (status, toolbar){
 	var toolbar = $(toolbar), status = $(status), self = this;
 	this.data('ex.status', status).data('ex.toolbar', toolbar);
 	this.each(function(){
+		bililiteRange(this).ex(''); // make sure it's initialized (including the undo manager)
 		var monitor = $(this).savemonitor();
 		$(this).data('ex.monitor', monitor);
 		var data = bililiteRange(this).data();
@@ -42,7 +43,7 @@ $.fn.ex = function (status, toolbar){
 		monitor.on($.savemonitor.states, function(evt){
 			data['save~state'] = evt.type;
 		});
-	}
+	});
 	toolbar.keydown({keys: /\w/}, function (evt){
 		// numbers/letters to activate the toolbar buttons (can tab/shift-tab over then enter, as normal)
 		self.each(function(){
@@ -87,6 +88,10 @@ $.fn.simulateclick = function (){
 // The new commands
 
 $.extend(bililiteRange.ex.commands, {
+	sendkeys: function (parameter, variant){
+		this.sendkeys(parameter);
+	},
+	
 	toolbar: function (parameter, variant){
 		var toolbar = $(this.element()).data('ex.toolbar');
 		var which = parseInt(parameter);
@@ -103,25 +108,29 @@ $.extend(bililiteRange.ex.commands, {
 		var toolbar = $el.data('ex.toolbar');
 		var opts = {};
 		if (variant){
-			// use the complex form
+			// use the simple form
+			opts.name = parameter;
+		}else{
 			bililiteRange.ex.splitCommands(parameter, ' ').forEach(function(item){
 				var match = /(\w+)=(.+)/.exec(item);
 				if (!match) throw new Error('Bad syntax in button: '+item);
-				exmapparam[match[1]] = bililiteRange.ex.string(match[2]);
+				opts[match[1]] = bililiteRange.ex.string(match[2]);
 			});
-		}else{
-			opts.name = parameter;
 		}
 		if (!opts.name && opts.command) opts.name = opts.command;
 		if (!opts.name && opts.monitor) opts.name = opts.monitor;
 		if (!opts.name) throw new Error ('No name defined in button');
 		if (!opts.command && opts.monitor) opts.command = opts.monitor+" toggle";
 		if (!opts.command && bililiteRange.ex.commands[opts.name]) opts.command = opts.name;
-		if (!opts.command) opts.command = 'a '+JSON.stringify(opts.name); // just insert the string
+		if (!opts.command) opts.command = 'sendkeys '+JSON.stringify(opts.name); // just insert the string
 		
 		function run(event){
 			$el.data('ex.status').status({
-				run: rng.ex(opts.command, '%%')
+				run: function(){
+					rng.bounds('selection').ex(opts.command, '%%').select().scrollIntoView();
+					rng.element().focus();
+					return rng.exMessage;
+				}
 			});
 			event.preventDefault();
 		}
@@ -143,7 +152,7 @@ $.extend(bililiteRange.ex.commands, {
 		if (opts.monitor) {
 			var monitorValue;
 			function setValue(value) {
-				if (isBoolean(value)) value = value ? 'on' : 'off';
+				if (typeof value === "boolean") value = value ? 'on' : 'off';
 				if (monitorValue) button.removeClass(monitorValue);
 				button.addClass(value);
 				monitorValue = value;
@@ -153,24 +162,6 @@ $.extend(bililiteRange.ex.commands, {
 				setValue (evt.detail.value);
 			})
 		}
-	},
-
-	// TODO: find an elegant way to incorporate mode without using vi!
-	map: function (parameter, variant){
-		// The last word (either in a string or not containing spaces) is the replacement; the rest of
-		// the string at the beginning are the mapped key(s)
-		var match = /^(.+?)([^"\s]+|"(?:[^"]|\\")+")$/.exec(parameter);
-		var rng = this, $el = $(this.element);
-		if (!match) throw {message: 'Bad syntax in map: '+parameter};
-		var keys = match[1].trim();
-		var command = bililiteRange.ex.string(match[2]);
-		$el.off('keydown', {keys: keys});
-		$el.keydown({keys: keys}, function(event){
-			$el.data('ex.status').status({
-				run: rng.ex(command, '%%')
-			});
-		});
-
 	},
 	
 	read: function (parameter, variant){
