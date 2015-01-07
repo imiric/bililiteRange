@@ -206,6 +206,7 @@ var addressRE = new RegExp('^\\s*' + // allow whitespace at the beginning
 
 // command id's in the real ex are letters and = & ~ > < 
 var idRE = /^\s*(!|[a-zA-Z=&~><]+)/; // a single exclamation point is a legal command
+// TODO: consider removing this
 var aUnicode = 'a'.charCodeAt(0);
 function encodeID (c){
 	// encodes a single character in base-26 (a-z) numbers preceded by '&'; sort of like encodeURI with '%'s

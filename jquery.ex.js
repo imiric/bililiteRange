@@ -29,7 +29,21 @@
 // OTHER DEALINGS IN THE SOFTWARE.
 
 (function ($){
-$.fn.ex = function (status, toolbar){
+$.fn.ex = function (command){
+	return this.each(function(){
+		var $el = $(this), rng = bililiteRange(this);
+		$el.data('ex.status').status({
+			run: function(){
+				rng.bounds('selection').ex(command, '%%').select().scrollIntoView();
+				$el.focus();
+				return rng.exMessage;
+			}
+		});
+	});
+}
+
+// TODO: stick this into $.fn.ex somehow (invent reasonable defaults?
+$.fn.exInit = function (status, toolbar){
 	// the toolbar, status bar and monitor are attached to the jQuery data. The actual state (clean, dirty, pending) is attached to the
 	// bililiteRange data, so we can access it from ex.
 	var toolbar = $(toolbar), status = $(status), self = this;
@@ -77,6 +91,12 @@ bililiteRange.data('save~state', { // the string representing whether the text h
 	monitored: true
 });
 
+// state of the editor. This is obviously meant to work with vi, but we don't commit to it
+bililiteRange.data('exmode', {
+	value: 'INSERT',
+	monitored: true
+});
+
 
 $.fn.simulateclick = function (){
 	var self = this;
@@ -93,6 +113,7 @@ $.extend(bililiteRange.ex.commands, {
 	},
 	
 	toolbar: function (parameter, variant){
+		console.log('toolbar');
 		var toolbar = $(this.element()).data('ex.toolbar');
 		var which = parseInt(parameter);
 		var target = $(this.element());
@@ -125,13 +146,7 @@ $.extend(bililiteRange.ex.commands, {
 		if (!opts.command) opts.command = 'sendkeys '+JSON.stringify(opts.name); // just insert the string
 		
 		function run(event){
-			$el.data('ex.status').status({
-				run: function(){
-					rng.bounds('selection').ex(opts.command, '%%').select().scrollIntoView();
-					rng.element().focus();
-					return rng.exMessage;
-				}
-			});
+			$el.ex(opts.command);
 			event.preventDefault();
 		}
 
@@ -186,7 +201,24 @@ $.extend(bililiteRange.ex.commands, {
 			)},
 			returnPromise: true
 		}));
+	},
+	map: function (parameter, variant){
+		// The last word (either in a string or not containing spaces) is the replacement; the rest of
+		// the string at the beginning are the mapped key(s)
+		var match = /^(.+?)([^"\s]+|"(?:[^"]|\\")+")$/.exec(parameter);
+		if (!match) throw {message: 'Bad syntax in map: '+parameter};
+		var keys = match[1].trim();
+		var command = bililiteRange.ex.string(match[2]);
+		var rng = this, $el = $(this.element());
+		$el.off('keydown', {keys: keys}); // TODO: allow for same key in different modes!
+		$el.keydown({keys: keys}, function(event){
+			if ((rng.data().exmode == 'INSERT') == variant){
+				$el.ex(command);
+				event.preventDefault();
+			}
+		});
 	}
+
 });
 
 })(jQuery);

@@ -3,7 +3,7 @@
 
 // depends:  bililiteRange.ex.js and all its depends,  jquery.keymap.js, jquery.savemonitor.js, jquery.status.js, jquery.livesearch.js
 // documentation: to be created
-// Version 0.9
+// Version 0.91
 
 // Copyright (c) 2014 Daniel Wachsstock
 // MIT license:
@@ -31,26 +31,15 @@
 (function($){
 
 $.fn.vi = function(status, toolbar, exrc){
-	this.ex(status, toolbar);
+	this.exInit(status, toolbar);
+	this.ex(defaultvicommands);
 	var self = this;
 	if (exrc) $.get(exrc).then(function(commands){
-		self.each(function(){
-			// note that this is done asynchronously, so the user may be editing before this gets executed
-			var rng = bililiteRange(this).ex(commands);
-		});
+		self.ex(commands); // note that this is done asynchronously, so the user may be editing before this gets executed
 	});
 	return this;
 }
 
-// extensions to bililiteRange
-bililiteRange.extend({
-	is: function (b){
-		return this.bounds()[0] == b[0] && this.bounds()[1] == b[1];
-	},
-	union: function (b){
-		this.bounds(Math.min (this.bounds()[0],b[0]), Math.max (this.bounds()[1],b[1]));
-	}
-});
 
 // TODO: simplify this
 function executeCommand (rng, command, defaultAddress){
@@ -70,319 +59,71 @@ function executeCommand (rng, command, defaultAddress){
 }
 
 var body = $('body');
-// TODO: eliminate this (most of it is in the button command anyway)
-$.exmap = function(opts, defaults){
-	if ($.isArray(opts)){
-		var self = this;
-		opts.forEach(function(opt) {self.exmap(opt, defaults)});
-		return self;
-	}
-	opts = $.extend({}, opts, defaults);
-	if (!opts.name && typeof opts.command == 'string') opts.name = opts.command;
-	if (!opts.name && opts.monitor) opts.name = opts.monitor;
-	if (!opts.name && opts.keys) opts.name = opts.keys;
-	if (!opts.name) opts.name = Math.random().toString(); // need something!
-	if (!opts.command && opts.monitor) opts.command = opts.monitor+" toggle";
-	if (!opts.command && bililiteRange.ex.commands[opts.name]) opts.command = opts.name;
-	if (!opts.command) opts.command = 'sendkeys '+JSON.stringify(opts.name);
-	if ($.isFunction(opts.command)){
-		var commandName = bililiteRange.ex.toID(opts.name);
-		bililiteRange.ex.commands[commandName] = opts.command;
-		opts.command = commandName;
-	}
-	if (/([a-z]+)~motion/.test(opts.command)){
-		// replace this command with one that just pushes the name of the command, leaving the original command to be run after the motion is complete 
-		var motionCommand = opts.command; // this is the real command
-		opts.command = RegExp.$1+'~motiondependent';
-		bililiteRange.ex.commands[opts.command] = function(){
-			this.data().motionStart = [this.bounds()[0], this.bounds()[1]];
-			this.data().motionCommand = motionCommand;
-		};
-	}
-	function run(event){
-		$($.data(event.rng.element(), 'vi.status')).status({
-			run: executeCommand(event.rng, opts.command, '%%')
-		});
-		event.preventDefault();
-	}
-	var button = $(); // make sure it exists
-	if (opts.buttonContainer){
-		button = $('button[name='+JSON.stringify(opts.name)+']', opts.buttonContainer);
-		if (button.length == 0) button = $('<button>').appendTo(opts.buttonContainer);
-		button.attr({
-			name: opts.name,
-			'class': opts.name.replace(/~/g,'-'),
-			title: opts.title
-		}).on('vi-click', {mode: opts.mode}, run);
-	}
-	if (opts.keys){
-		body.on('vi-keydown', {keys: opts.keys, mode: opts.mode}, function(event){
-			if (button){
-			  // simulate a click
-				button.addClass('highlight')
-				setTimeout(function(){ button.removeClass('highlight') }, 400);
-			}
-			run(event);
-		});
-	}
-	if (opts.monitor) {
-		// TODO: remove the monitoring function; make a logical default
-		if (!opts.monitoringFunction) opts.monitoringFunction = function(option, value){
-			// assume we're looking at a binary option
-			this.removeClass('on off').addClass(value ? 'on' : 'off');
-		}
-		body.on('vi-data', {name: opts.monitor}, function(evt){
-			opts.monitoringFunction.call(button, evt.detail.option, evt.detail.value);			
-		})
-	}
-};
 
 /*------------ Set up default options ------------ */
-// unlike real vi, start in insert mode since that is more "natural" for a GUI
-bililiteRange.data('vimode', {
-	value: 'INSERT',
-	enumerable: false
-});
-
 // RE's for searching
 bililiteRange.ex.createOption('word', /^|$|\W+|\w+/);
 bililiteRange.ex.createOption('bigword', /^|$|\s+|\S+/);
 
-// for saving
-bililiteRange.ex.createOption('directory', ''); // used as the $.post url for saving
-bililiteRange.ex.createOption('file', 'Untitled');
-
-// writing files. Assumes POSTing with {buffer: text-to-be-saved, file: filename}
-// use mockjax to do something else.
-bililiteRange.data('monitor', {
-	enumerable: false
-});
-bililiteRange.data('save~state', {
-	value: 'clean',
-	enumerable: false,
-	monitored: true
-});
-
-// a series of digits means a number of times to repeat a command
-// 'count' is that number; some commands use that directly but text-entry commands can only repeat after the text is entered.
-// so the count is saved in 'repeatcount' (since 'count' is reset after every command), and the present text is saved.
-// When we return to visual mode, we see how that text has changed and insert the new text (at whereever the insertion point is!) 
-// 'repeatcount'-1 times ( since it's already been inserted once)
-bililiteRange.data('count', { // a number preceding vi commands
-	value: 0,
-	enumerable: false
-});
-bililiteRange.data('oldtext', { // for repeated insertions, this is the original text to compare to
-	enumerable: false
-});
-bililiteRange.data('repeatcount', { // this is the number of times to repeat insertions
-	value: 0,
-	enumerable: false
-});
-body.on('vi-keydown', {keys: /\d/, mode: 'VISUAL'}, function (evt){
-	var state = bililiteRange(evt.target).data();
-	if (state.count == 0 && evt.hotkeys == '0') return; // 0 has a different meaning if not part of a number
-	state.count = state.count * 10 + parseInt(evt.hotkeys);
-	evt.preventDefault();
-	evt.stopImmediatePropagation();
-});
-
-// a double quote followed by a letter means store the result of the next command (if it removes text) into that register
-bililiteRange.data('register', {enumerable: false});
-body.on('vi-keydown', {keys: /" [A-Za-z]/, mode: 'VISUAL'}, function (evt){
-	evt.range.data().register = evt.hotkeys.charAt(2);
-	evt.preventDefault();
-	evt.stopImmediatePropagation();
-});
-
 // track tab size
 bililiteRange.data ('tabSize', {monitored: true});
-body.on('vi-data', {name: 'tabSize'}, function (evt){
-	var style = evt.rng.element().style;
+body.on('bililiteRangeData', {name: 'tabSize'}, function (evt){
+	var style = evt.target.style;
 	style.tabSize =
 	style.OTabSize =
 	style.MozTabSize = evt.detail.value; // for browsers that support this.
 });
-
-/*------------ Set up generic commands ------------ */
-
-$.exmap([
-{
-	name: 'console',
-	command: function (parameter, variant){
-		console.log(executeCommand(this)(parameter));
-	}
-},{
-	name: 'map',
-	command: function (parameter, variant){
-		// The last word (either in a string or not containing spaces) is the replacement; the rest of
-		// the string at the beginning are the mapped key(s)
-		var match = /^(.+?)([^"\s]+|"(?:[^"]|\\")+")$/.exec(parameter);
-		if (!match) throw {message: 'Bad syntax in map: '+parameter};
-		var keys = match[1].trim();
-		var command = bililiteRange.ex.string(match[2]);
-		// TODO: remove any old key handlers
-		// TODO: change to just create the keydown handler, and use a closure to check mode rather than a custom event
-		// something like:
-		// $el.off('keydown', {keys: keys});
-		// $el.keydown({keys: keys}, function(event){
-		// $el.data('ex.status').status({
-		// run: function() { if vimode == 'INPUT' && variant rng.ex(command, '%%')
-		// });
-		// });
-		$.exmap({
-			keys: keys,
-			command: command,
-			mode: variant ? 'INSERT' : 'VISUAL'
-		});
-	}
-},{
-	name: 'repeat',
-	command: function (parameter, variant){
-		var state = this.data();
-		for (var i = state.count || 1; i > 0; --i){
-			var result = executeCommand(this, parameter, '%%')();
+ 
+$.extend(bililiteRange.ex.commands, {
+	find: function (parameter, variant){
+		if (parameter.charAt(0) == '/'){
+			// parse as a RegExp
+			parameter = bililiteRange.ex.createRE (parameter, this.data().ignorecase);
+		}else{
+			// parse as an option
+			parameter = this.data()[parameter];
 		}
-		return result;
-	}
-},{
-	name: 'select',
-	command: function (parameter, variant){
+		this.find(parameter, undefined, variant);
+	},
+	select: function (parameter, variant){
 		this.bounds(parameter).select();
-	}
-},{
-	name: 'vi',
-	keys: '{esc}',
-	command: function (parameter, variant){
+	},
+	vi: function (parameter, variant){
 		var state = this.data();
 		parameter = parameter || 'VISUAL';
-		// an insertion with a count means repeat the insertion when we return to visual mode
-		if (parameter == 'INSERT'){
-			state.repeatcount = Math.max(state.count - 1, 0); // -1 since we've done one insertion already
-			state.oldtext = this.all();
-		}else if (parameter == 'VISUAL' && state.repeatcount){
-			var text = bililiteRange.diff(state.oldtext, this.all()).data;
-			this.bounds('endbounds').text(text.repeat(state.repeatcount), 'end');
-			state.repeatcount = 0;
-		}
-		state.vimode = parameter;
-	}
-},{
-	keys: '^z', // not really part of vi, but too ingrained in my fingers
-	command: 'undo'
-},{
-	keys: '^y',
-	command: 'redo'
-}
-]);
-
-bililiteRange.ex.commands.w = 'write'; // shortcut
-
-/*------------ Set up VISUAL mode commands ------------ */
-$.exmap([
-{
-	keys: ':',
-	command: function (){
-		var el = this.element();
-		$.data(el, 'vi.status').status({
+		state.exmode = parameter;
+	},
+	'vi~colon': function (){
+		var $el = $(this.element());
+		$el.data('ex.status').status({
 			prompt: ':',
-			run: executeCommand(this),
+			run: function(command) { $el.ex(command) },
 			returnPromise: true
 		}).then( // make sure we return focus to the text! It would be nice to have a finally method
 			function(e) {el.focus()},
 			function(e) {el.focus()}
 		);
-	}
-},{
-	keys: 'a',
-	command : "select endbounds | vi INSERT"
-},{
-	keys: 'b', // end of previous word
-	command: function(){
-		var state = this.data();
-		for (var i = state.count || 1; i > 0; --i){
-			this.findBack(state.word, true);
-		}
-		this.bounds('endbounds');
-	}
-},{
-	keys: 'B', // end of previous bigword
-	command: function(){
-		var state = this.data();
-		for (var i = state.count || 1; i > 0; --i){
-			this.findBack(state.bigword, true);
-		}
-		this.bounds('endbounds');
-	}
-},{
-	keys: 'e', // end of next word
-	command: function(){
-		var state = this.data();
-		for (var i = state.count || 1; i > 0; --i){
-			this.find(state.word, true);
-		}
-		this.bounds('endbounds');
-	}
-},{
-	keys: 'E', // end of next bigword
-	command: function(){
-		var state = this.data();
-		for (var i = state.count || 1; i > 0; --i){
-			this.find(state.bigword, true);
-		}
-		this.bounds('endbounds');
-	}
-},{
-	keys: 'h',
-	command: "repeat sendkeys {leftarrow}"
-},{
-	keys: 'i',
-	command: "select startbounds | vi INSERT"
-},{
-	keys: 'l',
-	command: "repeat sendkeys {rightarrow}"
-},{
-	keys: 'o',
-	command: ".a | vi INSERT"
-},{
-	keys: '0',
-	command: "select BOL" // if part of a number, should have been handled above
-},{
-	keys: '$',
-	command: 'select EOL'
-},{
-	keys: '^',
-	command: function(){
-		this.bounds('BOL').find(/\S/).bounds('startbounds');
-	}
-},{
-	keys: '>',
-	command: 'repeat >'
-},{
-	keys: '<',
-	command: 'repeat <'
-},{
-	keys: '/',
-	name: 'livesearch',
-	command: function(parameter, variant){
-		var rng = this, el = this.element(), $status = $.data(el, 'vi.status');
-		$status.status({
-			prompt: variant ? '?' : '/',
-			run: function(text){
-				rng.bounds('selection').find(new RegExp(text), undefined, variant).select().scrollIntoView();
-				if (!rng.match) throw new Error(text+' not found');
-			},
-			returnPromise: true
-		}).then( // make sure we return focus to the text! It would be nice to have a finally method
-			function(e) {el.focus()},
-			function(e) {el.focus()}
-		);
-		$status.off('.search').on('input.search focus.search focusout.search', 'input', $(el).livesearch(variant));
-	}
-},{
-	keys: '?',
-	command: 'livesearch!'
-}
-], {mode: 'VISUAL'});
+	},
+});
+
+var defaultvicommands = [
+	'map! ^z undo',
+	'map! ^y redo',
+	'map! {esc} vi',
+	'map : vi~colon',
+	'map a "select endbounds | vi INSERT"',
+	'map A "select EOL | vi INSERT"',
+	'map b "find! word | select endbounds"',
+	'map B "find! bigword | select endbounds"',
+	'map e "find word | select endbounds"',
+	'map E "find bigword | select endbounds"',
+	'map i "select startbounds | vi INSERT"',
+	'map i "select EOL | vi INSERT"',
+	'map o ".a | vi INSERT"',
+	'map O ".-1a | vi INSERT"',
+	'map 0 "select BOL"',
+	'map $ "select EOL"',
+	'map ^ "select BOL | find /\\\\S/ | select startbounds"'
+].join('|');
 
 })(jQuery);
