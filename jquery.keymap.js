@@ -1,6 +1,10 @@
-// mapping for standard US keyboards. Replace the $.keymap.normal, $.keymap.shift, $.keymap.ctrl and $.keymap.alt arrays as needed
-// Version: 2.4
-// Copyright (c) 2013 Daniel Wachsstock
+// Updated to use the 2014 proposed W3C DOM events:
+// http://www.w3.org/TR/DOM-Level-3-Events/
+// http://www.w3.org/TR/DOM-Level-3-Events-key/
+// See https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent.key for how it is currently (2015) implemented
+//
+// Version: 3.0
+// Copyright (c) 2015 Daniel Wachsstock
 // MIT license:
 // Permission is hereby granted, free of charge, to any person
 // obtaining a copy of this software and associated documentation
@@ -23,7 +27,7 @@
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 // OTHER DEALINGS IN THE SOFTWARE.
 
-// requires Array.prototype.forEach, so lets me nice to IE8
+// requires Array.prototype.forEach, so lets be nice to IE8
 if ( !Array.prototype.forEach ) {
   Array.prototype.forEach = function(fn, scope) {
     for(var i = 0, len = this.length; i < len; ++i) {
@@ -32,181 +36,256 @@ if ( !Array.prototype.forEach ) {
   }
 }
 
-// depends on jQuery to normalize the keydown event 
 (function($){
-	// returns the sendkeys http://bililite.com/blog/2011/01/23/improved-sendkeys/ equivalent of the character, with addtions from the
-	// Microsoft version (http://msdn.microsoft.com/en-us/library/system.windows.forms.sendkeys.aspx)
-	// and their indicators of control keys (+^%)
+	// polyfill for the key field of the event, and sets a new field "keymap" that incorporates 
+	// the modifier keys, as in Microsoft's sendkeys function: + for shift, ^ for control, % for alt
+	// Shifted keys with a different form do not get the +; thus ^a is control-a; ^A is control-shift-a
+	// returns the value of keymap
+	// NOTE: modifier keys alone are intentionally ignored and return undefined
+	// NOTE: assumes only unmodified and shifted and AltGr'd keys are printable; this is false for a lot of non-English keyboards
+	// that use the CapsLock modifiers. Until KeyboardEvent.getModifierState (https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent.getModifierState)
+	// is implemented consistently, I suspect that will be impossible.
+	// NOTE: tries to implement the meta key but I'm not sure if it works (I only have a Windows machine on which to test this)
+	
+	// original keymap plugin returned the mapped keys
 	$.keymap = function (evt){
-		var c = evt.which, shift = evt.shiftKey, ctrl = evt.ctrlKey, alt = evt.altKey;
-		var ret;
-		if (shift && $.keymap.shift[c]){
-			ret = $.keymap.shift[c];
-			shift = false;
-		}else if (ctrl && $.keymap.ctrl[c]){
-			ret = $.keymap.ctrl[c];
-			ctrl = false;
-		}else if (alt && $.keymap.alt[c]){
-			ret = $.keymap.alt[c];
-			alt = false;
-		}else{
-			ret = $.keymap.normal[c];
-		}
-		if (!ret) return false;
-		if (alt) ret = '%' + ret;
-		if (ctrl) ret = '^' + ret;
-		if (shift) ret = '+' + ret;
-		// make sure control characters are uppercase
-		return $.keymap.normalize(ret);
+		return $.keymap.normalize(evt).keymap;
 	}
 
+	// this is the meat of the plugin.
+	$.keymap.normalize = function (evt){
+		if (evt.keymap == null){
+			var key = evt.key,
+				shift = evt.shiftKey, ctrl = evt.ctrlKey, alt = evt.altKey, meta = evt.metaKey,
+				altGr = ctrl && alt; // this seems to be the standard for the alt-graphics key, http://stackoverflow.com/questions/17857404/why-does-alt-gr-have-the-same-keycode-as-ctrl
+			if (key != null){
+				// key is implemented; just use what they got
+
+				if (/^(?:shift|control|meta|alt)$/i.test(key)) return evt; // ignore modifier keys alone
+
+				// IE (of course!) is different: shifted control characters use the unshifted key code.
+				var i = keymaps.normal.indexOf(key);
+				if (shift && i !== -1) key = keymaps.shift.charAt(i); // fix it
+				// shift-altGr is not a problem, since that would require meta-alt-ctrl-shift, and Windows doesn't do meta
+			}else{
+				// need to use the character map
+				var c = evt.which != null ? evt.which : evt.charCode != null ? evt.charCode : evt.keyCode;
+				key = charcodes[c];
+				if (typeof key === 'number'){
+					if (shift && altGr && keymaps.shift_alt.charCodeAt(key) !== 0){
+						key = keymaps.shift_alt.charAt(key);
+					}else if (altGr && keymaps.alt.charCodeAt(key) != 0){
+						key = keymaps.alt.charAt(key);
+					}else if (shift && keymaps.shift.charCodeAt(key) != 0){
+						key = keymaps.shift.charAt(key);
+					}else{
+						key = keymaps.normal.charAt(key);
+					}
+				}
+			}
+			if (key == null) return evt; // not a known key
+			if (keymaps.shift_alt.indexOf(key) !== -1) shift = alt = ctrl = false;  // already have the key shifted; don't mark the keymap with a +
+			if (keymaps.shift.indexOf(key) !== -1) shift = false;
+			if (keymaps.alt.indexOf(key) !== -1) alt = ctrl = false;
+			evt.keymap = key; 
+			if (meta) evt.keymap = '~' + evt.keymap;
+			if (alt) evt.keymap = '%' + evt.keymap;
+			if (ctrl) evt.keymap = '^' + evt.keymap;
+			if (shift) evt.keymap = '+' + evt.keymap;
+		}
+		evt.keymap = $.keymap.normalizeString(evt.keymap); // this may be inefficiently normalizing the string multiple times if we reuse the event
+		// now renormalize the key itself
+		evt.shiftKey = evt.ctrlKey = evt.altKey = false;
+		evt.key = evt.keymap.replace (/^([+^%~]*)(.+)/, function (match, p1, p2){
+			if (/\+/.test(p1) || keymaps.shift.indexOf(p2) !== -1 || keymaps.shift_alt.indexOf(p2) !== -1) evt.shiftKey = true; // TODO: deal with altGr
+			if (/\^/.test(p1) || keymaps.alt.indexOf(p2) !== -1 || keymaps.shift_alt.indexOf(p2) !== -1) evt.ctrlKey = true;
+			if (/%/.test(p1) || keymaps.alt.indexOf(p2) !== -1 || keymaps.shift_alt.indexOf(p2) !== -1) evt.altKey = true;
+			if (/~/.test(p1)) evt.metaKey = true;
+			return p2;
+		});
+		if (evt.key == 'Spacebar') evt.key = ' '; // restore the standard
+		return evt;
+	}
+
+	// normalize capitalization	
+	var aliases = $.map(
+		'Backspace CapsLock Delete Enter Escape Insert NumLock Tab Spacebar PageUp PageDown End Home ArrowLeft ArrowUp ArrowRight ArrowDown'.split(' '),
+		function (key){
+			return {alias:  new RegExp('\\b'+key+'\\b', 'i'), key: key};
+		}
+	);
+		
+	// various other key notations that I want to use
 	var aliasgenerator = {
+		// new notation for Menu button
+		apps: 'ContextMenu',
+		menu: 'ContextMenu',
 		// VIM notation (and jquery.hotkeys numeric keypad notation)
 		'^<(.*)>$': '$1', // strip the brackets
-		'(?:k|num_)(\\d)': 'num$1', // numeric keypad indicator; change to num1 now; we will change it to {1} etc. later
-		'\\b(?:k|num_)([a-z]+)': '$1', // replace kHome with Home etc.; we can't distinguish keypad direction keys
+		'\\b(?:k|num_)(\\w+)': '$1', // we do not distinguish the numeric keypad
+		//sendkeys notation; strip brackets
+		'{(\\w+)}': '$1',
 		// the sendkeys aliases
-		bksp: 'backspace',
-		bs: 'backspace',
-		del: 'delete',
-		down: 'downarrow',
-		left: 'leftarrow',
-		right: 'rightarrow',
-		up: 'uparrow',
+		bksp: 'Backspace',
+		bs: 'Backspace',
+		del: 'Delete',
+		esc: 'Escape',
+		down: 'ArrowDown',
+		left: 'ArrowLeft',
+		right: 'ArrowRight',
+		up: 'ArrowUp',
+		downarrow: 'ArrowDown',
+		leftarrow: 'ArrowLeft',
+		rightarrow: 'ArrowRight',
+		uparrow: 'ArrowUp',
+		add: '+',
+		subtract: '-',
+		multiply: '*',
+		divide: '/',
 		// hotkeys plugin (https://github.com/jeresig/jquery.hotkeys/blob/master/jquery.hotkeys.js), and modifiers from VIM
 		's(hift)?[+-]': '+',
 		'c(trl)?[+-]': '^',
-		'm(eta)?[+-]': '%', // needs to be before a(lt)- so the met[a-] doesn't match!
+		'm(eta)?[+-]': '~', // needs to be before a(lt)- so the met[a-] doesn't match!
 		'a(lt)?[+-]': '%',
-		pageup: 'pgup',
-		pguparrow: 'pgup', // in case we overcorrected above
-		pagedown: 'pgdn',
 		decimal: '.',
 		// VIM notation (http://polarhome.com/vim/manual/v71/intro.html#key-notation)
-		minus: 'subtract',
+		minus: '-',
 		point: '.',
 		lt: '<',
-		'#(\\d+)': 'f$1', // this is documented for ex (http://pubs.opengroup.org/onlinepubs/9699919799/utilities/ex.html#tag_20_40_13_24) but no reason not to include it
+		'#(\\d+)': 'F$1', // this is documented for ex (http://pubs.opengroup.org/onlinepubs/9699919799/utilities/ex.html#tag_20_40_13_24) but no reason not to include it
 		// Jonathan Tang's keycode.js (https://github.com/nostrademons/keycode.js)
 		'page_up': 'pgup',
 		'page_down': 'pgdn',
-		'escape': 'esc',
-		'num\\+': 'add',
-		'num-': 'subtract',
-		'num\\*': 'multiply',
-		'num/': 'divide',
-		
-		// make sure the special keys by themselves are marked
-		'^[+%^{]$': '{$&}',
-		
+		'num\\+': '+',
+		'num-': '-',
+		'num\\*': '*',
+		'num/': '/',
+				
 		'^\\+(\\w)$': function (match, p1) {return p1.toUpperCase()}, // uppercase shifted letters
-		'[+^%]\\w$': function(match) {return match.toUpperCase()}, // control-letters are uppercase
-		'[+^%]+': function (match) { // normalize the order of shift-ctrl-alt
-			return (/\+/.test(match) ? '+' : '') +
-				(/\^/.test(match) ? '^' : '') +
-				(/%/.test(match) ? '%' : '')
-		}
+
+		// one exceptions to the standard:
+		// I use Spacebar for space, not ' ', since that is used as a separator below
+		' ': 'Spacebar',
+
+		'([+^%~]+)(.)': function (match, p1, p2) { // normalize the order of shift-ctrl-alt
+			return (/\+/.test(p1) ? '+' : '') +
+				(/\^/.test(p1) ? '^' : '') +
+				(/%/.test(p1) ? '%' : '') +
+				(/~/.test(p1) ? '~' : '') + p2;
+		},
 	};
-	// TODO: inlcude the DOM3 key codes: https://dvcs.w3.org/hg/dom3events/raw-file/tip/html/DOM3-Events.html#h3_code-value-tables
-	var aliases =[];
 	for (alias in aliasgenerator){
 		// mark whole words
-		var name = aliasgenerator[alias];
-		if (/^\w$/.test(alias)) alias = '\\b'+alias
-		if (/\w$/.test(alias)) alias += '\\b'
-		aliases.push({alias: new RegExp(alias), name: name});
+		var key = aliasgenerator[alias];
+		if (/^\w/.test(alias)) alias = '\\b'+alias;
+		if (/\w$/.test(alias)) alias += '\\b';
+		aliases.push({alias: new RegExp(alias, 'i'), key: key});
 	}
-	
-	$.keymap.normalize = function(c){
-		// control letters can be written as uppercase(need to be explicitly shifted, if that's what's wanted)
-		c = c.replace(/([^%])([A-Z])\b/, function(match, p1, p2) { return p1+p2.toLowerCase() });
-		// mark uppercase letters
-		c = c.replace(/\b[A-Z]\b/, '+$&');
-		// simple things to keep notation consistent
-		c = c.replace(/\s/g,'').replace(/\w/g, function (match) {return match.toLowerCase()});
-		aliases.forEach(function(alias) { c=c.replace(alias.alias, alias.name) });
-		// anything with a word in it must mean a special key; make sure it's bracketed, and remove the numeric keypad indicator (we indicate it by leaving it in {})
-		if (!/{/.test(c)) c = c.replace(/[\w.]{2,}/, '{$&');
-		if (!/}/.test(c)) c = c.replace(/[\w.]{2,}/, '$&}');
-		c = c.replace (/num([\d.])/i, '$1');
-		return c;
+				
+	$.keymap.normalizeString = function(s){
+		aliases.forEach(function(alias) { s=s.replace(alias.alias, alias.key) });
+		return s;
 	}
 	
 	$.keymap.normalizeList = function(str){
 		// normalize a list of space-delimited characters.
-		return $.trim($.map(str.split(/\s+/), $.keymap.normalize).join(' '));
+		return $.trim($.map(str.split(/\s+/), $.keymap.normalizeString).join(' '));
 	}
 	
-	$.keymap.normal = {
-		 8	: '{backspace}',
-		46	: '{delete}',
-		13	: '{enter}',
-		27	: '{esc}',
-		45	: '{insert}',
-		 9	: '{tab}'
+	var charcodes = {
+		 32	: ' ',
+		  8	: 'Backspace',
+		 20	: 'CapsLock',
+		 93 : 'ContextMenu',
+		 46	: 'Delete',
+		 13	: 'Enter',
+		 27	: 'Escape',
+		 45	: 'Insert',
+		144	: 'NumLock',
+		  9	: 'Tab'
 	};
-	'space pgup pgdn end home leftarrow uparrow rightarrow downarrow'.
-		split(' ').forEach(function(c,i) {$.keymap.normal[i+32] = '{'+c+'}'});
-	"0123456789"
-		.split('').forEach(function(c,i) {$.keymap.normal[i+48] = c});
-	$.keymap.normal[59] = ';'; // Firefox only!
-	"abcdefghijklmnopqrstuvwxyz"
-		.split('').forEach(function(c,i) {$.keymap.normal[i+65] = c});
-	"0 1 2 3 4 5 6 7 8 9 multiply add unused subtract . divide". // numeric keypad keys
-		split(' ').forEach(function(c,i) {$.keymap.normal[i+96] = '{'+c+'}'});
+	'PageUp PageDown End Home ArrowLeft ArrowUp ArrowRight ArrowDown'.
+		split(' ').forEach(function(c,i) {charcodes[i+33] = c});
+	"0123456789*+,-./". // numeric keypad keys
+		split('').forEach(function(c,i) {charcodes[i+96] = c});
 	for(i=1;i<=12;++i)
-		$.keymap.normal[i+111] = '{f'+i+'}'; // function keys
-	';=,-./`'
-		.split('').forEach(function(c,i) {$.keymap.normal[i+186] = c});
-	"[\\]'"
-		.split('').forEach(function(c,i) {$.keymap.normal[i+219] = c});
+		charcodes[i+111] = 'F'+i; // function keys
 	
-	$.keymap.shift = {
-		192: '~',
-		 49: '!',
-		 50: '@',
-		 51: '#',
-		 52: '$',
-		 53: '{%}',
-		 54: '{^}',
-		 55: '&',
-		 56: '*',
-		 57: '(',
-		 59: ':', // Firefox only!
-		 48: ')',
-		189: '_',
-		187: '{+}',
-		219: '{{}',
-		220: '|',
-		221: '}',
-		186: ':',
-		222: '"',
-		188: '<',
-		190: '>',
-		191: '?'
-	};
-		
-	$.keymap.ctrl = {};	
+	// the numeric codes in order for the keyboard I'm using (from Virtualkeyboard; standard 101 keyboard
+	// but '\' key to the right of '=', not ']' )
+	[
+		192,49,50,51,52,53,54,55,56,57,48,189,187,220,
+		81,87,69,82,84,89,85,73,79,80,219,221,
+		65,83,68,70,71,72,74,75,76,186,222,
+		90,88,67,86,66,78,77,188,190,191
+	].forEach(function (code, i){
+		charcodes[code] = i;
+	});
+	// note that there seems to be an inconsistency in Firefox wherein the key with code 189 for everyone else
+	// has code 59. Odd.
+	charcodes[59] = charcodes[189]
+	
+	var blankstring = Array(48).join(String.fromCharCode(0)); // a string of 47 null characters, for building key maps (there are 47 printing keys)
 
-	$.keymap.alt = {};
+	var keymaps;
 	
+	$.keymap.setlayout = function (layouts){
+		// uses the layout format from VirtualKeyboard.
+		// Each element is a string representing the keyboard left to right, top to bottom
+		// or an object of substrings, each indexed by the starting index
+		keymaps = { normal: blankstring, shift: blankstring, alt: blankstring, shift_alt: blankstring }
+		for (layout in layouts){
+			if (typeof layouts[layout] === 'string'){
+				keymaps[layout] = layouts[layout];
+			}else{
+				for (i in layouts[layout]){
+					i = parseInt(i);
+					keymaps[layout] =
+						keymaps[layout].slice(0,i) +
+						layouts[layout][i] +
+						keymaps[layout].substring(i+layouts[layout][i].length);
+				}
+			}
+		}
+		// add uppercase keys; assumes normal and shift exist
+		var shifts = keymaps.shift.split('');
+		keymaps.normal.split('').forEach(function (c, i){
+			if (shifts[i].charCodeAt(0) === 0 && c.toUpperCase() !== c) shifts[i] = c.toUpperCase();
+		});
+		keymaps.shift = shifts.join('');
+	};
+			
+	$.keymap.setlayout ({
+		normal:'`1234567890-=\\qwertyuiop[]asdfghjkl;\'zxcvbnm,./',
+		shift:{0:'~!@#$%^&*()_+|',24:'{}',35:':"',44:'<>?'}
+	});
+		
 	// based on John Resig's hotkeys (https://github.com/jeresig/jquery.hotkeys)
 	// $.event.special documentation at http://learn.jquery.com/events/event-extensions/
-	// Initialize with $.keymap.hotkeys('keydown');
 	// use with $(element).on('keydown, {keys: '%1', allowDefault: true}, function(){});
 	
 	// first, create an index of namespaces to identify each keystroke list
+	// we do this to be able to remove a handler; $(el).off('keydown', {keys: 'x'}, handler) won't
+	// work since we change the handler function. So we fake each $().on as
+	// $(el).on ('keydown.hotkeys123', function() {if (keymap==keys) handler.call})
+	// and $(el).off('keydown', {keys...}) as $(el).off('keydown.hotkeys123')
 	var nss = {};
 	var nsIndex = 0;
 	function hotkeysnamespace(keys){
 		return nss[keys] || (nss[keys] = 'hotkeys'+ (++nsIndex));
 	}
 	
+	// modify keyboard events to use {keys: '^a %b'} notation. Note that the field should really be 'keymaps',
+	// since we allow the modifer notation described above
 	["keydown","keyup"].forEach(function(type){
-		$.event.fixHooks[type] = { props: "char charCode key keyCode hotkeys".split(" ") };
+		$.event.fixHooks[type] = {
+			props: "char charCode code key keyCode keymap hotkeys".split(" "),
+			filter: $.keymap.normalize
+		};
 		$.event.special[type] = $.event.special[type] || {};
+		$.event.special[type].trigger = $.keymap.normalize;
 		$.event.special[type].add = function(handleObj){
-			if (!handleObj.data) return;
+			if (!handleObj.data || !handleObj.data.keys) return;
 			var keys = handleObj.data.keys;
 			// Use the keys as a sort of namespace for the event. This is a hack for removing the handler later.
 			handleObj.namespace = handleObj.namespace.split('.').
