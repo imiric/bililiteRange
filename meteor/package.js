@@ -7,7 +7,7 @@ var where = 'client';
 Package.describe({
   name: packageName,
   summary: 'Library for manipulating text ranges and selections',
-  version: '2.6.0',
+  version: '2.6.1',
   git: 'https://github.com/dwachss/bililiteRange.git'
 });
 
