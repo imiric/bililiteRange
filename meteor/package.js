@@ -7,7 +7,7 @@ var where = 'client';
 Package.describe({
   name: packageName,
   summary: 'Library for simulating keypresses in a browser',
-  version: '4.0.0',
+  version: '4.0.1',
   git: 'https://github.com/dwachss/bililiteRange.git'
 });
 
@@ -15,7 +15,7 @@ Package.onUse(function (api) {
   api.versionsFrom('1.0');
   api.use('jquery', 'client');
   api.imply('jquery', 'client');
-  api.use('bililiterange:bililiterange@2.6.0', 'client');
+  api.use('bililiterange:bililiterange@2.6.1', 'client');
   api.imply('bililiterange:bililiterange', 'client');
   api.addFiles([
     'jquery.sendkeys.js'
