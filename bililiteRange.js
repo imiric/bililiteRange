@@ -136,6 +136,15 @@ function textProp(el){
 	return 'innerText';
 }
 
+function simplechar (rng, c){
+    if (/^{[^}]*}$/.test(c)) c = c.slice(1,-1);	// deal with unknown {key}s
+    for (var i =0; i < c.length; ++i){
+        var x = c.charCodeAt(i);
+        rng.dispatch({type: 'keypress', keyCode: x, which: x, charCode: x});
+    }
+    rng.text(c, 'end');
+}
+
 // base class
 function Range(){}
 Range.prototype = {
@@ -195,14 +204,6 @@ Range.prototype = {
 		var self = this;
 		this.data().sendkeysOriginalText = this.text();
 		this.data().sendkeysBounds = undefined;
-		function simplechar (rng, c){
-			if (/^{[^}]*}$/.test(c)) c = c.slice(1,-1);	// deal with unknown {key}s
-			for (var i =0; i < c.length; ++i){
-				var x = c.charCodeAt(i);
-				rng.dispatch({type: 'keypress', keyCode: x, which: x, charCode: x});
-			}
-			rng.text(c, 'end');
-		}
 		text.replace(/{[^}]*}|[^{]+|{/g, function(part){
 			(bililiteRange.sendkeys[part] || simplechar)(self, part, simplechar);
 		});
